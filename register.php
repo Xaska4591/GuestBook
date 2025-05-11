@@ -1,73 +1,96 @@
 <?php
-// TODO 1: PREPARING ENVIRONMENT: 1) session 2) functions
+// register.php
 session_start();
 
-// TODO 2: ROUTING
+// Якщо вже авторизовані — перекидаємо в адмінку
 if (!empty($_SESSION['auth'])) {
     header('Location: /admin.php');
-    die;
+    exit;
 }
 
-// TODO 3: CODE by REQUEST METHODS (ACTIONS) GET, POST, etc. (handle data from request): 1) validate 2) working with data source 3) transforming data
+// --- Функція підключення до БД ---
+function start_connect() {
+    $host = 'localhost';
+    $user = 'root';
+    $pass = '';
+    $db   = 'guestbook';
+    $conn = mysqli_connect($host, $user, $pass, $db);
+    if (!$conn) {
+        die('DB Connection Error: ' . mysqli_connect_error());
+    }
+    return $conn;
+}
 
-// 1. Create empty $infoMessage
+// Повідомлення для користувача
 $infoMessage = '';
 
-// 2. handle form data
-if (!empty($_POST['email']) && !empty($_POST['password'])) {
+// Обробка форми
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $email    = trim($_POST['email']    ?? '');
+    $username = trim($_POST['username'] ?? '');
+    $password = trim($_POST['password'] ?? '');
 
-    // 3. Check that user has already existed
-    $isAlreadyRegistered = false;
-    $fileUsers = 'users.csv';
+    // 1) Перевіряємо заповненість
+    if ($email === '' || $username === '' || $password === '') {
+        $infoMessage = 'Будь ласка, заповніть всі поля!';
+    }
+    // 2) Перевіряємо довжину username/password
+    elseif (strlen($username) < 8 || strlen($username) > 45
+        || strlen($password) < 8 || strlen($password) > 45
+    ) {
+        $infoMessage = 'Логін та пароль повинні містити від 8 до 45 символів.';
+    }
+    // 3) Перевіряємо формат email
+    elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $infoMessage = 'Невірний формат email.';
+    }
+    else {
+        $db = start_connect();
+        // Екранізуємо вхідні дані
+        $e = mysqli_real_escape_string($db, $email);
+        $u = mysqli_real_escape_string($db, $username);
+        $p = mysqli_real_escape_string($db, $password);
 
-    if (file_exists($fileUsers)) {
-        $sUsers = file_get_contents($fileUsers);
-        $aJsonsUsers = explode("\n", $sUsers);
-
-        foreach ($aJsonsUsers as $jsonUser) {
-            $aUser = json_decode($jsonUser, true);
-            if (!$aUser) break;
-
-            foreach ($aUser as $email => $password) {
-                if (($email == $_POST['email']) && ($password == $_POST['password'])) {
-                    $isAlreadyRegistered = true;
-
-                    $infoMessage = "Такой пользователь уже существует! Перейдите на страницу входа. ";
-                    $infoMessage .= "<a href='/login.php'>Страница входа</a>";
-                }
+        // 4) Перевіряємо, чи вже є такий email або username
+        $sql  = "SELECT 1 
+                 FROM users 
+                 WHERE email='$e' OR username='$u' 
+                 LIMIT 1";
+        $res  = mysqli_query($db, $sql);
+        if (!$res) {
+            $infoMessage = 'Помилка запиту: ' . mysqli_error($db);
+        }
+        elseif (mysqli_num_rows($res) > 0) {
+            $infoMessage = 'Такий користувач уже існує! ';
+            $infoMessage .= '<a href="/login.php">Перейти на сторінку входу</a>';
+        }
+        else {
+            // 5) Вставляємо нового користувача
+            $insert = "
+                INSERT INTO users (username, email, password, created_at)
+                VALUES ('$u', '$e', '$p', NOW())
+            ";
+            if (mysqli_query($db, $insert)) {
+                mysqli_close($db);
+                header('Location: /login.php');
+                exit;
+            } else {
+                $infoMessage = 'Помилка запису: ' . mysqli_error($db);
             }
         }
+        mysqli_close($db);
     }
-
-    if (!$isAlreadyRegistered) {
-        // 4. Create new user
-        $aNewUser = [$_POST['email'] => $_POST['password']];
-        file_put_contents("users.csv", json_encode($aNewUser) . "\n", FILE_APPEND);
-
-        header('Location: /login.php');
-        die;
-    }
-
-} elseif (!empty($_POST)) {
-    $infoMessage = 'Заполните форму регистрации!';
 }
-
-// TODO 4: RENDER: 1) view (html) 2) data (from php)
-
 ?>
-
-
 <!DOCTYPE html>
-<html>
-
-<?php require_once 'sectionHead.php' ?>
-
+<html lang="uk">
+<head>
+    <?php require_once 'sectionHead.php'; ?>
+    <title>Реєстрація</title>
+</head>
 <body>
-
 <div class="container">
-
-    <?php require_once 'sectionNavbar.php' ?>
-
+    <?php require_once 'sectionNavbar.php'; ?>
     <br>
 
     <div class="card card-primary">
@@ -75,33 +98,41 @@ if (!empty($_POST['email']) && !empty($_POST['password'])) {
             Register form
         </div>
         <div class="card-body">
-            <form method="post">
-                <div class="form-group">
-                    <label>Email</label>
-                    <input class="form-control" type="email" name="email"/>
+            <form method="post" action="/register.php">
+                <div class="mb-3">
+                    <label class="form-label">Email</label>
+                    <input type="email"
+                           name="email"
+                           class="form-control"
+                           value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
+                           required>
                 </div>
-                <div class="form-group">
-                    <label>Password</label>
-                    <input class="form-control" type="password" name="password"/>
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    <input type="text"
+                           name="username"
+                           class="form-control"
+                           value="<?= htmlspecialchars($_POST['username'] ?? '') ?>"
+                           required>
                 </div>
-                <br>
-                <div class="form-group">
-                    <input type="submit" class="btn btn-primary" name="formRegister"/>
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password"
+                           name="password"
+                           class="form-control"
+                           required>
                 </div>
+                <button type="submit" class="btn btn-primary">Зареєструватися</button>
             </form>
 
-            <!-- TODO: render php data   -->
-            <?php
-                if ($infoMessage) {
-                    echo '<hr/>';
-                    echo "<span style='color:red'>$infoMessage</span>";
-                }
-            ?>
-
+            <?php if ($infoMessage): ?>
+                <hr>
+                <div class="alert alert-danger">
+                    <?= $infoMessage ?>
+                </div>
+            <?php endif; ?>
         </div>
-
     </div>
 </div>
-
 </body>
 </html>
